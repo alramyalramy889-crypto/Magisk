@@ -271,7 +271,9 @@ class MainActivity : AppCompatActivity(), SplashScreenHost {
                 showInvalidState.value = true
             } else {
                 lifecycleScope.launch {
-                    AppMigration.restore(this@MainActivity)
+                    if (!AppMigration.restoreApp(this@MainActivity)) {
+                        toast(CoreR.string.failure, Toast.LENGTH_LONG)
+                    }
                 }
             }
         }

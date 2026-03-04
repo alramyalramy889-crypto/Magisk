@@ -16,6 +16,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
@@ -23,6 +25,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.topjohnwu.magisk.core.Config
 import com.topjohnwu.magisk.core.Info
+import com.topjohnwu.magisk.ui.component.ConfirmResult
 import com.topjohnwu.magisk.ui.component.rememberConfirmDialog
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Checkbox
@@ -33,6 +36,8 @@ import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TopAppBar
+import top.yukonga.miuix.kmp.extra.SuperArrow
+import top.yukonga.miuix.kmp.extra.SuperBottomSheet
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -41,6 +46,7 @@ import com.topjohnwu.magisk.core.R as CoreR
 @Composable
 fun InstallScreen(viewModel: InstallViewModel, onBack: () -> Unit) {
     val uiState by viewModel.uiState.collectAsState()
+    val showBottomSheet = rememberSaveable { mutableStateOf(false) }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let { viewModel.onPatchFileSelected(it) }
@@ -59,8 +65,11 @@ fun InstallScreen(viewModel: InstallViewModel, onBack: () -> Unit) {
 
     LaunchedEffect(uiState.showSecondSlotWarning) {
         if (uiState.showSecondSlotWarning) {
-            secondSlotDialog.showConfirm(title = secondSlotTitle, content = secondSlotMsg)
+            val result = secondSlotDialog.awaitConfirm(title = secondSlotTitle, content = secondSlotMsg)
             viewModel.onSecondSlotWarningConsumed()
+            if (result == ConfirmResult.Confirmed) {
+                viewModel.install()
+            }
         }
     }
 
@@ -100,10 +109,90 @@ fun InstallScreen(viewModel: InstallViewModel, onBack: () -> Unit) {
                 OptionsCard(uiState = uiState, viewModel = viewModel)
             }
 
-            MethodCard(uiState = uiState, viewModel = viewModel)
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(CoreR.string.install_method_title),
+                            style = MiuixTheme.textStyles.headline2,
+                        )
+                        TextButton(
+                            text = stringResource(CoreR.string.install_start),
+                            onClick = { showBottomSheet.value = true },
+                            enabled = uiState.step >= 1 || viewModel.skipOptions
+                        )
+                    }
+                }
+            }
 
             if (uiState.notes.isNotEmpty()) {
                 NotesCard(notes = uiState.notes)
+            }
+        }
+    }
+
+    MethodBottomSheet(
+        show = showBottomSheet,
+        viewModel = viewModel,
+        notes = uiState.notes
+    )
+}
+
+@Composable
+private fun MethodBottomSheet(
+    show: androidx.compose.runtime.MutableState<Boolean>,
+    viewModel: InstallViewModel,
+    notes: String
+) {
+    SuperBottomSheet(
+        show = show,
+        onDismissRequest = { show.value = false },
+        title = stringResource(CoreR.string.install_method_title),
+    ) {
+        Column(modifier = Modifier.padding(bottom = 16.dp)) {
+            if (notes.isNotEmpty()) {
+                Text(
+                    text = notes,
+                    style = MiuixTheme.textStyles.body2,
+                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+
+            SuperArrow(
+                title = stringResource(CoreR.string.select_patch_file),
+                summary = stringResource(CoreR.string.select_patch_file_summary),
+                onClick = {
+                    show.value = false
+                    viewModel.selectMethod(InstallViewModel.Method.PATCH)
+                }
+            )
+
+            if (viewModel.isRooted) {
+                SuperArrow(
+                    title = stringResource(CoreR.string.direct_install),
+                    summary = stringResource(CoreR.string.direct_install_summary),
+                    onClick = {
+                        show.value = false
+                        viewModel.selectMethod(InstallViewModel.Method.DIRECT)
+                        viewModel.install()
+                    }
+                )
+            }
+
+            if (!viewModel.noSecondSlot) {
+                SuperArrow(
+                    title = stringResource(CoreR.string.install_inactive_slot),
+                    summary = stringResource(CoreR.string.install_inactive_slot_summary),
+                    onClick = {
+                        show.value = false
+                        viewModel.selectMethod(InstallViewModel.Method.INACTIVE_SLOT)
+                    }
+                )
             }
         }
     }
@@ -160,55 +249,6 @@ private fun OptionsCard(uiState: InstallViewModel.UiState, viewModel: InstallVie
 }
 
 @Composable
-private fun MethodCard(uiState: InstallViewModel.UiState, viewModel: InstallViewModel) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = stringResource(CoreR.string.install_method_title),
-                    style = MiuixTheme.textStyles.headline2,
-                )
-                if (uiState.step == 1) {
-                    TextButton(
-                        text = stringResource(CoreR.string.install_start),
-                        onClick = { viewModel.install() },
-                        enabled = viewModel.canInstall
-                    )
-                }
-            }
-
-            if (uiState.step == 1) {
-                Spacer(Modifier.height(8.dp))
-
-                MethodRadioRow(
-                    label = stringResource(CoreR.string.select_patch_file),
-                    selected = uiState.method == InstallViewModel.Method.PATCH,
-                    onClick = { viewModel.selectMethod(InstallViewModel.Method.PATCH) }
-                )
-                if (viewModel.isRooted) {
-                    MethodRadioRow(
-                        label = stringResource(CoreR.string.direct_install),
-                        selected = uiState.method == InstallViewModel.Method.DIRECT,
-                        onClick = { viewModel.selectMethod(InstallViewModel.Method.DIRECT) }
-                    )
-                }
-                if (!viewModel.noSecondSlot) {
-                    MethodRadioRow(
-                        label = stringResource(CoreR.string.install_inactive_slot),
-                        selected = uiState.method == InstallViewModel.Method.INACTIVE_SLOT,
-                        onClick = { viewModel.selectMethod(InstallViewModel.Method.INACTIVE_SLOT) }
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun NotesCard(notes: String) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Text(
@@ -232,26 +272,6 @@ private fun CheckboxRow(label: String, checked: Boolean, onCheckedChange: (Boole
         Checkbox(
             checked = checked,
             onCheckedChange = { onCheckedChange(it) }
-        )
-        Text(
-            text = label,
-            style = MiuixTheme.textStyles.body1,
-        )
-    }
-}
-
-@Composable
-private fun MethodRadioRow(label: String, selected: Boolean, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Checkbox(
-            checked = selected,
-            onCheckedChange = { onClick() }
         )
         Text(
             text = label,
